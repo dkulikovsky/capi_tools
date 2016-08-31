@@ -1,0 +1,1042 @@
+syntax = "proto3";
+
+option java_package = "ru.yandex.schedulers.cluster.api.protobuf";
+option java_outer_classname = "ClusterApi";
+
+import "google/protobuf/descriptor.proto";
+
+//----------------------------------------------- Методы API ---------------------------------------------------------
+
+// Подробное описание принципов работы ClusterAPI:
+// https://wiki.yandex-team.ru/clusterapi/#scenariiispolzovanijaapi
+// Возможные HTTP-коды ошибок:
+// https://wiki.yandex-team.ru/ClusterAPI/ErrorCodes/
+
+// Изменение состояния множества групп на кластере.
+// POST /proto/v0/apply/group
+// ApplyGroupTransitionResponse applyGroupTransition(ApplyGroupTransitionRequest);
+
+//Получение состояния кластера. Если состояние не изменилось относительно запрашиваемого, вернется статус HTTP 304.
+// POST /proto/v0/state/full
+// ClusterState getState(GetStateRequest);
+
+// Удаление множества групп с кластера.
+// POST /proto/v0/destroy
+// DestroyResponse destroy(DestroyRequest);
+
+// Получение изменений в состоянии кластера.
+// Подробное описание функциональности https://wiki.yandex-team.ru/clusterapi/clusterapifilters/
+// POST /proto/v0/state/delta
+// ClusterStateDelta getStateDelta(GetStateDeltaRequest);
+
+//----------------------------------- Метаданные для описания фильтров/триггеров -------------------------------------
+
+// Сообщения этого раздела используются для документирования интерфейса и внутренних проверок.
+// Использовать их в клиентском коде не следует.
+
+enum FilterType {
+    NONE = 0;
+    HOST = 1;
+    WORKLOAD = 2;
+}
+
+extend google.protobuf.MessageOptions {
+    // Сообщение может быть первым элементом в фильтре указанного типа
+    FilterType filter_root = 76123;
+}
+
+extend google.protobuf.FieldOptions {
+    // Поле с filterable = true может быть последним элементом в левой части условия фильтра или в условии триггера
+    bool filterable = 76123;
+    // Поле с triggerable = true может быть последним элементом в условии триггера
+    // Используется для составных полей, если можно написать триггер на все поле, но не на отдельные его элементы
+    bool triggerable = 76124;
+}
+
+//------------------------------------------------ Запросы ----------------------------------------------------------
+
+// Аргумент applyGroupTransition
+message ApplyGroupTransitionRequest {
+    repeated GroupTransition groupTransitions = 1;
+    SchedulerSignature schedulerSignature = 2;
+}
+
+// Целевое состояние группы задач
+// CAPI будет приводить группу к описанному состоянию, в том числе изменяя состяние и удаляя ранее запущенные задачи группы,
+// если их указанное состояние отличается от текущего состояния на кластере
+message GroupTransition {
+    // Идентификатор группы задач. Запросы с одинаковым идентификатором будут применяться к одной и той же группе.
+    string groupId = 1;
+    // Автор запроса, для него будет проверяться права/квоты
+    Owner owner = 2;
+    // Описания задач группы на отдельных хостах
+    repeated Transition transitions = 3;
+    // Уникальный идентификатор конкретной операции для логирования/отладки
+    string groupOperationId = 4;
+}
+
+// Список задач на хосте в рамках группы задач.
+// Обязательно следует передавать все задачи группы, в том числе и те, в которые не вносились изменения с предыдущего запроса.
+// Задачи, состояние которых не соответствует указанному, будут изменены/удалены.
+message Transition {
+    string hostId = 1;
+    // etag состояния хоста, на основании которого осуществлялось планирование
+    int64 hostStateEtag = 2;
+    repeated Workload workloads = 3;
+}
+
+// Аргумент getState
+message GetStateRequest {
+    // Версия известного клиенту состояния кластера. Если совпадает с версией на сервере, то последний вернет HTTP 304.
+    // Логика аналогична HTTP If-None-Match
+    // В случае метакластера возвращается 304 только в случае совпадения всех версий подкластеров.
+    ClusterVersion previousVersion = 1;
+    // Фильтр возвращаемых хостов. См. https://wiki.yandex-team.ru/clusterapi/clusterapifilters/#grammatikafiltrov
+    string hostFilter = 2;
+    // Фильтр задач на хостах. См. https://wiki.yandex-team.ru/clusterapi/clusterapifilters/#grammatikafiltrov
+    string workloadFilter = 3;
+}
+
+// Аргумент getStateDelta
+message GetStateDeltaRequest {
+    // Версия известного клиенту состояния кластера - относительно нее будут рассчитываться изменения
+    ClusterVersion fromVersion = 1;
+    // Фильтр возвращаемых хостов
+    string hostFilter = 2;
+    // Фильтр задач на хостах
+    string workloadFilter = 3;
+    // Триггер, определяющий, какие события включать в ответ.
+    // См. https://wiki.yandex-team.ru/clusterapi/clusterapifilters/#grammatikatriggerov
+    string trigger = 4;
+    // Ограничение снизу на количество возвращаемых в запросе сущностей (хостов + задач)
+    // В ответе может быть больше сущностей
+    int32 workloadLowerBound = 5;
+    // Ограничение на время ожидания запроса в миллисекундах
+    // Запрос завершается, когда либо набрано требуемое количество изменившихся сущностей, либо истекло время ожидания
+    int32 timeoutMs = 6;
+}
+
+// Аргумент destroy
+message DestroyRequest {
+    repeated DestroyGroupRequest groupsToDestroy = 1;
+    SchedulerSignature schedulerSignature = 2;
+}
+
+// Запрос на удаление конкретной группы
+message DestroyGroupRequest {
+    string groupId = 1;
+    // Автор запроса на удаление, для него будут проверяться права/квоты
+    Owner owner = 2;
+}
+
+// Пользователь, от чьего имени задается запрос на изменение кластера
+message Owner {
+    // Идентификатор пользователя
+    string ownerId = 1;
+    // Приоритет пользователя в рамках проекта, минимальный приоритет 0 максимальный 1000. Соостветсвенно 1000 - самое приоритетное
+    int64 priority = 2;
+    // Идентификатор проекта, в рамках которого производится запрос
+    string projectId = 3;
+}
+
+// Подпись планировщика, пославшего запрос на изменение кластера.
+// Для логирования/отладки.
+message SchedulerSignature {
+    //идентификатор планировщика
+    string schedulerId = 1;
+    //короткое описание, что планировщик собирался сделать
+    string message = 2;
+}
+
+//------------------------------------------- Ответы на изменяющие запросы --------------------------------------------
+
+// Ответ на applyGroupTransition
+message ApplyGroupTransitionResponse {
+    repeated ApplyGroupEither results = 1;
+}
+
+// Результат изменения состояния группы. В случае ошибки выставляется поле exception.
+// Ошибка означает, что группа осталась в том же состоянии, что и до применения операции.
+message ApplyGroupEither {
+    string groupId = 1;
+    Exception exception = 3;
+}
+
+// Ответ на destroy
+message DestroyResponse {
+    repeated DestroyGroupEither results = 1;
+}
+
+// Результат удаления группы. В случае ошибки выставляется поле exception
+message DestroyGroupEither {
+    string groupId = 1;
+    Exception exception = 2;
+}
+
+//------------------------------------------- Состояние кластера ---------------------------------------------------
+
+// Состояние кластера
+// Может быть композитом из нескольких кластеров
+message ClusterState {
+    // Хосты с задачами
+    repeated Host hosts = 1;
+    // Список хостов, на которые нельзя планировать задачи. TODO: будет удален.
+    repeated string bannedHosts = 2;
+    ClusterVersion version = 3;
+}
+
+// Изменения между двумя состояниями кластера
+message ClusterStateDelta {
+    // Изменившиеся и созданные проходящие фильтр хосты
+    // Здесь только метаинформация о хостах (вычислительные ресурсы, здоровье).
+    // Изменения в задачах идут отдельными полями, без привязки к хостам
+    repeated HostMetadata changedHosts = 1;
+    // Хосты, переставшие проходить фильтр
+    repeated HostMetadata fallenOutHosts = 2;
+    // Удаленные хосты, ранее проходившие фильтр
+    repeated string removedHostIds = 3;
+    // Изменившиеся и созданные проходящие фильтр задачи
+    repeated Workload changedWorkloads = 4;
+    // Задачи, переставшие проходить фильтр
+    repeated Workload fallenOutWorkloads = 5;
+    // Удаленные задачи, ранее проходившие фильтр
+    repeated WorkloadId removedWorkloadIds = 6;
+    // Версия конечного состояния, для которого были посчитаны изменения
+    ClusterVersion version = 7;
+}
+
+// Версия состояния кластера
+// Для атомарного кластера, то есть не разбитого на подкластера, содержит единственную пару <имя> -> <номер версии>.
+// Номер версии увеличивается при каждом изменении.
+// Может откатиться назад, например, при ручном перезапуске со старым состоянием.
+// Для метакластера, т.е. объединения набора кластеров, содержит объединение версий подкластеров.
+// Пока что планируется единственный уровень мета-кластера.
+message ClusterVersion {
+    // <имя кластера> -> <версия состояния>
+    map<string, uint64> versions = 1;
+}
+
+// Метаданные о хосте
+message HostMetadata {
+    option (filter_root) = HOST;
+    // FQDN
+    string id = 1 [(filterable) = true];
+    // etag текущего состояния хоста
+    int64 etag = 2 [(filterable) = true];
+    // Полные вычислительные ресурсы хоста
+    // Свободные вычислительные ресурсы можно получить вычитанием ресурсов, занятых задачами
+    ComputingResources computingResources = 3 [(triggerable) = true];
+    HostHealth health = 4 [(triggerable) = true];
+    Location location = 5 [(triggerable) = true];
+}
+
+// Хост и задачи на нем
+message Host {
+    // Метаданные об этом хосте
+    HostMetadata metadata = 1;
+
+    // Список задач на хосте.
+    repeated Workload workloads = 2;
+}
+
+// Физическое расположение хоста, поля соответствует полям из bot
+message Location {
+    string country = 1 [(filterable) = true];
+    string city = 2 [(filterable) = true];
+    string building = 3 [(filterable) = true];
+    string line = 4 [(filterable) = true];
+    string rack = 5 [(filterable) = true];
+    string unit = 6 [(filterable) = true];
+}
+
+// Текущее состояние хоста
+message HostHealth {
+    option (filter_root) = HOST;
+    HostHealthState state = 1 [(filterable) = true];
+}
+
+enum HostHealthState {
+    // Хост не работает
+    DOWN = 0;
+    // Хост работает, можно планировать на него задачи
+    UP = 1;
+    // Начальное состояние, хост нельзя использовать.
+    // Wall-E реагирует на появление таких хостов, переводит в их MAINTENANCE и наливает кошерными версиями софта.
+    INITIAL = 2;
+    // Всякие работы с хостом, переналивки, установки софта и т.п. После этого хост переходит в PROBATION.
+    MAINTENANCE = 3;
+    // Prestable-планировщик запускает тесты на таких хостах. По сообщению от prestable-планировщика или по
+    // истечению TTL хост переходит в UP.
+    PROBATION = 4;
+    // Планировщики должны понимать, что скоро хост уйдет и не следует на него планировать. Переводим в
+    // MAINTENANCE либо когда мешающих джобов на хосте больше нет, либо по TTL.
+    PREPARE_MAINTENANCE = 5;
+}
+
+// Выполняемая на хосте задача
+// TODO: задачей именуется также Job, нужно разрулить это
+message Workload {
+    option (filter_root) = WORKLOAD;
+    // Описание задачи
+    Entity entity = 1 [(triggerable) = true];
+    // Текущее состояние
+    DetailedCurrentState feedback = 2 [(triggerable) = true];
+
+    // Создатель задачи
+    Owner owner = 3;
+    // Создавший задачу планировщик
+    string schedulerId = 4;
+    // Пользовательские свойства
+    // Пробрасываются хукам через переменные среды
+    map<string, string> properties = 5;
+
+    WorkloadId id = 6;
+
+    // Целевое состояние - одно из "ACTIVE", "PREPARED", "REMOVED"
+    string targetState = 7 [(filterable) = true];
+
+    // Момент задания целевого состояния в формате UNIX timestamp
+    uint64 transitionTimestamp = 8;
+
+    //Поколение Workload в рамках GroupId
+    string generation = 9;
+}
+
+message Entity {
+    oneof kind {
+        Instance instance = 1;
+        Job job = 2;
+    }
+}
+
+//------------------------------------------------ Вычислительные ресурсы --------------------------------------------
+
+// Вычислительные ресурсы
+message ComputingResources {
+    option (filter_root) = HOST;
+    oneof cpuPowerPercentsCoreOptional {
+        // Процессорная мощность в процентах ядра
+        // Например, хост с 32 ядрами будет иметь значение 3200
+        // Различия в производительности между процессорами никак не учитываются
+        // Транслируется в cpu_guarantee
+        uint32 cpuPowerPercentsCore = 1;
+    }
+    // Набор графических карт
+    GpuSet gpuSet = 2;
+    oneof hddSpaceBytesOptional {
+        // Ограничение места на диске в байтах
+        // Пока никуда не транслируется =)
+        uint64 hddSpaceBytes = 3 [(filterable) = true];
+    }
+    // Наличие IPv4-интерфейса на хосте
+    bool hasIpv4 = 4 [(filterable) = true];
+    // Наличие IPv6-интерфейса на хосте
+    bool hasIpv6 = 5 [(filterable) = true];
+    // Наличие SSD-диска на хосте
+    bool hasSsd = 6 [(filterable) = true];
+    oneof iopsReadOptional {
+        // Ограничение на число чтений с диска в секунду
+        // Пока никуда не транслируется =)
+        uint32 iopsRead =  7 [(filterable) = true];
+    }
+    oneof iopsWriteOptional {
+        // Ограничение на число записей на диск в секунду
+        // Пока никуда не транслируется =)
+        uint32 iopsWrite =  8 [(filterable) = true];
+
+    }
+    oneof networkOutgoingBpsOptional {
+        // Ограничение на исходящий сетевой траффик в байтах в секунду
+        // Пока никуда не транслируется
+        uint64 networkOutgoingBps = 9 [(filterable) = true];
+    }
+    // Порты протокола TCP
+    // В описании ресурсов хоста указываются порты, которые могут занимать задачи
+    // В задачах - порты, которые требуются им для работы
+    Ports portsTcp = 10;
+    // Порты протокола UDP. Аналогично TCP.
+    Ports portsUdp = 11;
+    oneof ramBytesOptional {
+        // Ограничение на оперативную память в байтах
+        // Транслируется в memory_limit
+        uint64 ramBytes = 12 [(filterable) = true];
+    }
+    // Произвольные именованные исчислимые ресурсы
+    repeated NamedCountable namedCountables = 13;
+}
+
+message GpuSet {
+    repeated GpuSlot slots = 1;
+}
+
+// Описание графической карты
+message GpuSlot {
+    // Идентификатор на PCI-шине
+    string gpuId = 1;
+    // Версия архитектуры
+    GpuType gpuType = 2;
+    // Число streaming multiprocessors
+    // Что-то вроде группы ядер на CPU
+    // http://www.informit.com/articles/article.aspx?p=2103809
+    uint32 smNumber = 3;
+    // Память в мегабайтах
+    uint64 ramMb = 4;
+    // Путь к устройству в системе
+    string devicePath = 5;
+}
+
+// Версия архитектуры
+// В описании хоста обозначает версию конкретной карты
+// В описании задачи - минимальную подходящую версию
+// ANY удовлетворяет любая карта
+// CUDA_ANY - любая карта с CUDA
+// CUDA_<версия> - любая карта с указанной или большей версией
+enum GpuType {
+    ANY = 0;
+    CUDA_ANY = 1;
+    CUDA_2_0 = 2;
+    CUDA_2_1 = 3;
+    CUDA_3_0 = 4;
+    CUDA_3_2 = 5;
+    CUDA_3_5 = 6;
+    CUDA_3_7 = 7;
+    CUDA_5_0 = 8;
+    CUDA_5_2 = 9;
+}
+
+// Порты для интернет-протоколов
+// Для хоста: capacity - число свободных портов, required - занятые задачами порты
+// Для задачи: capacity - число требуемых портов, required - конкретные порты.
+// capacity может больше числа портов в required, в этом случае задаче будет назначено
+// capacity - required.size() случайных портов (еще не реализовано)
+message Ports {
+    int32 capacity = 1;
+    repeated uint32 required = 2;
+}
+
+// Любой ресурс, задаваемый в формате <имя> -> <количество>
+message NamedCountable {
+    string name = 1;
+    uint64 capacity = 2 [(filterable) = true];
+}
+
+//--------------------------------------------------- Исключения -----------------------------------------------------
+
+// Базовый класс исключения
+// Все поля, представляющие исключения, должны иметь этот тип, т.к. только он является самодостаточным
+// Прочие типы, например, GroupTransitionApplyException, не содержат поля message и имеют смысл только как
+// поля внутри Exception
+// Если ожидается какой-то специфический тип исключения - нужон делать приведение в пользовательском коде.
+// Чтобы восстановить тип исключения, нужно пройти по цепочке oneof derived.
+message Exception {
+    string detailMessage = 1;
+    oneof derived {
+        GroupTransitionApplyException groupTransitionApplyException = 2;
+        TransitionValidationException transitionValidationException = 3;
+        SystemException systemException = 4;
+    }
+}
+
+// Неконсистентные данные в запросе applyGroupTransition
+message ApplyIllegalStateException {
+}
+
+// Изменение группы не прошло, т.к. на каких-то хостах изменились etag'и
+message EtagFailureException {
+}
+
+// Ошибка при изменении состояния конкретной группы
+message GroupTransitionApplyException {
+    string groupId = 1;
+    // Ожидается HostTransitionApplyException, но такой тип поля задать нельзя - см. Exception
+    repeated Exception causes = 2;
+}
+
+// У CAPI нет информации о хосте
+message HostNotInClusterException {
+}
+
+// Запрошенные ресурсы не могут быть удовлетворены из свободных ресурсов на хосте
+message HostOvercommittedException {
+    // Список проблем в свободной форме
+    repeated string violations = 1;
+}
+
+// Базовый класс для всех ошибок, возникающих при изменении состояния кластера
+message TransitionValidationException {
+    oneof derived {
+        EtagFailureException etagFailureException = 1;
+        HostTransitionApplyException hostTransitionApplyException = 2;
+        QuotaViolationException quotaViolationException = 3;
+    }
+}
+
+// Автору запроса не хватает прав/квот для выполнения действия
+message QuotaViolationException {
+}
+
+// Ошибка при изменении состояния задач на конкретном хосте
+message HostTransitionApplyException {
+    string hostId = 1;
+    oneof derived {
+        ApplyIllegalStateException applyIllegalStateException = 2;
+        HostNotInClusterException hostNotInClusterException = 3;
+        HostOvercommittedException hostOvercommittedException = 4;
+    }
+}
+
+// Любая ошибка на сервере, не попадающая под специфические типы
+message SystemException {
+    // Имя класса исключения
+    string javaClass = 1;
+    // Длиннющий стектрейс
+    string stacktrace = 2;
+}
+
+//------------------------------- Описания запускаемых сущностей (демоны и задачи) ------------------------------------
+
+// Демон, он же инстанс - после завершения сущность перезапускается каждый раз, пока не будет удалена с кластера
+// Подробнее здесь - https://wiki.yandex-team.ru/iss3/Specifications/configuration/instance/
+message Instance {
+    option (filter_root) = WORKLOAD;
+
+    // Ограничения для всех хуков
+    Container container = 1;
+    repeated Volume volumes = 2;
+    // <имя ресурса> -> <описание ресурса>
+    map<string, Resourcelike> resources = 3;
+    // <имя хука> -> <временные лимиты>
+    // Имена хуков см https://wiki.yandex-team.ru/iss3/Specifications/configuration/instance/#naznacheniexukov
+    map<string, TimeLimit> timeLimits = 4;
+    // Точка монтирования, в которой создается рабочая директория инстанса.
+    // По умолчанию - "/".
+    string storage = 5;
+}
+
+// Задача, она же джоб - выполняется один раз и не перезапускается. Поля те же, что и у демона
+// https://wiki.yandex-team.ru/iss3/specifications/configuration/job/
+// Поля копируют содержимое Instance на случай будущих изменений, если эти классы разойдутся
+message Job {
+    option (filter_root) = WORKLOAD;
+    Container container = 1;
+    repeated Volume volumes = 2;
+    map<string, Resourcelike> resources = 3;
+    map<string, TimeLimit> timeLimits = 4;
+    string storage = 5;
+}
+
+// Ограничения на время исполнения и интервал между запусками хука. Все времена в миллисекундах.
+// maxExecutionTimeMs - ограничение на время выполнения.
+// Интервал между запусками рассчитывается по формуле
+// min(maxRestartPeriodMs, minRestartPeriodMs + restartPeriodScaleMs * (restartPeriodBackoff ^ step))
+// step считается с 0
+message TimeLimit {
+    uint64 restartPeriodScaleMs = 1;
+    uint64 restartPeriodBackOff = 2;
+    uint64 maxRestartPeriodMs = 3;
+    uint64 minRestartPeriodMs = 4;
+    uint64 maxExecutionTimeMs = 5;
+}
+
+// Описание контейнера, в котором запускается хук.
+message Container {
+    // Запрошенные для задачи вычислительные ресурсы.
+    // Учитываются при выборе хоста для выполнения задачи.
+    // Транслируются в ограничения porto-контейнера для всех хуков.
+    ComputingResources computingResources = 1;
+    // Уникальный в рамках хоста идентификатор контейнера.
+    // Все workload на хосте, у которых контейнер имеет одинаковый идентификатор, выполняются в одном porto-контейнере.
+    // Контейнеры с одинаковыми идентификаторами должны обязательно иметь равные поля в рамках одного хоста.
+    string id = 2;
+    // Свойства porto-контейнеров хуков, задаваемые непосредственно.
+    // Описание формата https://wiki.yandex-team.ru/iss3/specifications/configuration/container/
+    map<string, string> constraints = 3;
+}
+
+// Уникальный идентификатор задачи
+message WorkloadId {
+    Slot slot = 1;
+    // Название конфигурации в формате <семейство>#<имя конфигурации в семействе>
+    ConfigurationId configuration = 2;
+}
+
+// Место под сервис на хосте
+// Если две сущности используют один слот, то только одна из них может быть активной в каждый момент времени
+message Slot {
+    // Идентификатор сервиса на хосте, например (но не обязательно), порт
+    string service = 1;
+    // FQDN хоста
+    string host = 2;
+}
+
+// Идентификатор конфигурации - описания целевого состояния группы задач.
+message ConfigurationId {
+    // Группа, в которую входит задача - берется из GroupTransition.
+    string groupId = 1 [(filterable) = true];
+    // Идентификатор целевого состояния группы. Произвольная строка.
+    string groupStateFingerprint = 2;
+}
+
+//------------------------------------------------ Данные -------------------------------------------------------------
+
+// Раздел porto
+// Подробное описание здесь https://wiki.yandex-team.ru/iss3/specifications/configuration/instance/volumes/
+message Volume {
+    // Квота на размер корневого раздела
+    uint64 quotaBytes = 1;
+    // Квота на размер рабочей директории
+    uint64 quotaCwdBytes = 2;
+    // точка монтирования
+    string mountPoint = 3;
+    // Сейчас определено только свойство bind
+    // https://wiki.yandex-team.ru/iss3/specifications/configuration/instance/volumes/#polzovatelskijjbind
+    map<string, string> properties = 4;
+    // Слои, из которых собирается корневой раздел
+    repeated Resource layers = 5;
+    // Указывается при создании shared-volume
+    string uuid = 6;
+    // Точка монтирования, в которой будет создан volume, будут храниться его данные и распаковываться слои.
+    // По умолчанию создается под "/", данные хранятся в стандартных директориях porto.
+    string storage = 7;
+}
+
+// Базовый класс ресурса
+message Resourcelike  {
+    oneof kind {
+        Resource resource = 1;
+        DynamicResource dynamicResource = 2;
+        Shard shard = 3;
+    }
+}
+
+// Обычный ресурс - набор данных
+message Resource {
+    // Уникальный идентификатор (произвольная строка)
+    string uuid = 1 [(filterable) = true];
+    // Имя очереди закачки (пустое - качается без очереди)
+    // https://wiki.yandex-team.ru/iss3/specifications/agent/downloadqueues/
+    string queue = 2 [(filterable) = true];
+    Verification verification = 3;
+    // Ссылки на реурс, например, "rbtorrent:2f83ff0f5b98b315ce356e129ce1e00d7b67ec7d", "http://cmsearch.yandex.ru/res"
+    repeated string urls = 4;
+    // Размер ресурса в байтах
+    uint64 sizeBytes = 5;
+    // Является ли ресурс закешированным
+    // https://wiki.yandex-team.ru/iss3/Specifications/ShardTracker/#upravleniesvobodnymmestom
+    bool cached = 6;
+
+    // Точка монтирования, в которой будет скачан ресурс (см. Instance.storage)
+    string storage = 7;
+
+    // Ограничение скорости закачки
+    TrafficClass trafficClass = 8 [(triggerable) = true];
+}
+
+// Динамический ресурс
+// Может обновляться без перезапуска демона, при обновлении запускается iss_hook_notify
+// https://wiki.yandex-team.ru/iss3/specifications/configuration/resource/#dinamicheskijjresurs
+// Поля те же, что и у ресурса
+message DynamicResource {
+    string uuid = 1 [(filterable) = true];
+    string queue = 2 [(filterable) = true];
+    Verification verification = 3;
+    repeated string urls = 4;
+    uint64 sizeBytes = 5;
+    bool cached = 6;
+    string storage = 7;
+    // Ограничение скорости закачки
+    TrafficClass trafficClass = 8 [(triggerable) = true];
+}
+
+// Проверки целостности ресурса
+message Verification {
+    // Контрольная сумма, формат <схема>:<значение> Поддерживаемые схемы "MD5:", "EMPTY:" - case sensitive
+    string checksum = 1;
+    // Периодичность проверки контрольной суммы. При значении 0d0h0m проверка будет выполнена только 1 раз.
+    string checkPeriod = 2;
+}
+
+// Шард - данные + специальный сценарий подготовки
+// Подробности https://wiki.yandex-team.ru/iss3/specifications/shardtracker/
+message Shard {
+    // Уникальный идентификатор шарда
+    string shardId = 1 [(filterable) = true];
+    // Является ли шард закешированным (аналогично ресурсу)
+    bool cached = 3;
+    // Ограничения на хуки шарда. Отличаются от ограничений сущности правилами распределения между хуками
+    // TODO: актуализировать после ISS-3052
+    Container container = 4;
+    // Очередь, в которой выполняются закачка, инсталляция и расшаривание (при необходимости) шарда.
+    string queue = 5 [(filterable) = true];
+    // Режим дедупликации скачиваемых данных скайнетом
+    DeduplicationMode deduplicationMode = 6;
+    // Точка монтирования, в которой будет скачан и инсталлирован шард (см. Instance.storage)
+    string storage = 7;
+    // Ограничение скорости закачки
+    TrafficClass trafficClass = 8 [(triggerable) = true];
+}
+
+message TrafficClass {
+    int64 downloadSpeedLimit = 1 [(filterable) = true];
+    string trafficTag = 2 [(filterable) = true];
+}
+
+enum DeduplicationMode {
+    // На одинаковые файлы будут создаваться жесткие ссылки. Режим по умолчанию.
+    HARDLINK = 0;
+    // Не дедуплицировать.
+    NO = 1;
+    // На одинаковые файлы будут создаваться символьные ссылки.
+    SYMLINK = 2;
+}
+
+//----------------------------------------------- Обратная связь -----------------------------------------------------
+
+// Текущее состояние сущности
+message DetailedCurrentState {
+    option (filter_root) = WORKLOAD;
+    WorkloadId workloadId = 1;
+    // Строковое описание состояния, может принимать произвольные значения, в том числе весь список целевых состояний
+    string currentState = 2 [(filterable) = true];
+    CurrentStateFeedback feedback = 3;
+    // Момент отправки сообщения с агента
+    uint64 hostTimestamp = 4;
+    // Момент сохранения сообщения сервером
+    uint64 serverTimestamp = 5;
+}
+
+message CurrentStateFeedback {
+    // Поле для служебных сообщений в случае проблем с сохранением (например, слишком большое сообщение)
+    string specialMessage = 1;
+    // porto-метрики
+    repeated FeedbackMessage metrics = 2;
+    // сообщения о незавершенных операциях
+    repeated FeedbackMessage pendingStateMessages = 3;
+    repeated FeedbackMessage info = 4;
+    repeated FeedbackMessage warnings = 5;
+    repeated FeedbackMessage failures = 6;
+
+}
+
+// Отдельное сообщение обратной связи от агента
+message FeedbackMessage {
+    oneof kind {
+        CountersFeedback countersFeedback = 1;
+        FeedbackMergeMessage feedbackMergeMessage = 2;
+        FeedbackOkMessage feedbackOkMessage = 3;
+        Progress progress = 4;
+        Lock lock = 6;
+        ProcessFeedback processFeedback = 7;
+        SelfHelp selfHelp = 8;
+        ChecksumVerificationFailure checksumVerificationFailure = 9;
+        ChecksumProgress checksumProgress = 10;
+        DaemonFailure daemonFailure = 11;
+        DownloadFailed downloadFailed = 12;
+        ResourcesNotReady resourcesNotReady = 13;
+        ValidationFailed validationFailed = 14;
+        DirectoryFailure directoryFailure = 15;
+        CachedResourceNotRemoved cachedResourceNotRemoved = 16;
+        WaitingForFreeSpace waitingForFreeSpace = 17;
+        HookFailure hookFailure = 18;
+        CountLimit countLimit = 20;
+        FrequencyLimit frequencyLimit = 21;
+        PendingDriverRemove pendingRemove = 22;
+        TimeLimitViolation timeLimitViolation = 23;
+        ShardFailure shardFailure = 25;
+        FeedbackFailMessage failMessage = 27;
+        HookInProgress hookInProgress = 28;
+    }
+}
+
+// Базовое сообщение для всех поломок
+message FeedbackFailMessage {
+    // Тип проблемы, например, HOOK_FAILED
+    string state = 1;
+    // Подробное описание
+    string failReason = 2;
+}
+
+// Хук в процессе выполнения
+message HookInProgress {
+    string state = 1;
+    // Имя хука
+    string hook = 2;
+    // true сразу после запуска агента, false если агент рапортует об уже работающем хуке
+    bool justCreated = 3;
+}
+
+// Счетчики от порто
+message CountersFeedback {
+    string state = 1;
+    map<string, string> counters = 2;
+    uint64 timestamp = 3;
+    string container = 4;
+}
+
+// Информация о слиянии в агенте данных, полученных из разных кешеров
+message FeedbackMergeMessage {
+    string state = 1;
+}
+
+message FeedbackOkMessage {
+    string state = 2;
+}
+
+// Идет скачивание данных
+message Progress {
+    // Ссылка, по которой качается
+    string from = 1;
+    // Целевая директория
+    string to = 2;
+    uint64 bytesDone = 3;
+    uint64 bytesTotal = 4;
+    string state = 5;
+}
+
+// Операция не смогла взять блокировку (например, для очереди закачки)
+message Lock {
+    string state = 1;
+    // Имя блокировки
+    string lock = 2;
+    // Текущий владелец блокировки
+    string lockedBy = 3;
+    // Драйвер, который заблокировался
+    string requestedBy = 4;
+}
+
+// Завершение процесса
+message ProcessFeedback {
+    // DAEMON_EXITED - старт-хук демона завершился с кодом 0
+    // DAEMON_WAS_TERMINATED_EXTERNALLY - старт-хук демона завершился с кодом не-0
+    // HOOK_CANCELLED - хук/задачу убили 9-кой
+    // HOOK_FAILED - хук/задача завершились самостоятельно с кодом 1-31
+    // HOOK_SEMI_FAILED - хук упал с кодом 32-63
+    // HOOK_EXITED - хук/задача завершились с кодом 0
+    // Подробности про коды https://wiki.yandex-team.ru/iss3/specifications/configuration/instance/#naznacheniexukov
+    string state = 1;
+    // Имя завершившегося хука
+    string executableName = 2;
+    // Хвост stdout
+    string stdOut = 3;
+    // Хвост stderr
+    string stdErr = 4;
+    // Код завершения процесса
+    uint32 exitCode = 5;
+    // Номер сигнала, по которому завершился процесс.
+    // Темная магия агента старается обработать случай, когда процесс является шеллом
+    // и сигнализирует о завершении дочернего процесса по сигналу согласно http://www.tldp.org/LDP/abs/html/exitcodes.html
+    uint32 signalNumber = 6;
+    // Был ли процесс завершен из-за нехватки памяти
+    bool outOfMemory = 7;
+}
+
+// Отладочное сообщение
+message SelfHelp {
+    string cause = 1;
+    // Ссылка на ресурс, послуживший причиной
+    string url = 2;
+    // Локальное имя файла
+    string localName = 3;
+    // Затронутые сущности
+    repeated string affected = 4;
+    string customLines = 5;
+    string state = 6;
+}
+
+// Контрольная сумма ресурса не совпала с ожидаемой
+message ChecksumVerificationFailure {
+    string state = 1;
+    string expected = 2;
+    string calculated = 3;
+    string targetFile = 4;
+}
+
+// Идет вычисление контрольной суммы
+message ChecksumProgress {
+    string state = 1;
+    string targetFile = 2;
+}
+
+// Прочие проблемы со старт-хуком
+message DaemonFailure {
+    string state = 1;
+    string failReason = 3;
+    string hook = 4;
+}
+
+// Скачивание ресурса завершилось с ошибкой
+message DownloadFailed {
+    string state = 1;
+    string failReason = 3;
+    // Ссылка на ресурс
+    string from = 4;
+    // Путь к результату скачивания
+    string to = 5;
+}
+
+// Ресурсы сущности не готовы
+message ResourcesNotReady {
+    string state = 1;
+    // <имя не готового ресурса> -> <текущее состояние>
+    map<string, string> states = 2;
+    string failReason = 4;
+}
+
+// Не удалось проверить контрольную сумму ресурса
+message ValidationFailed {
+    string state = 1;
+    string failReason = 3;
+    // Отсутствующий файл ресурса
+    string missingFile = 4;
+    // Директория, в которой должен находиться файл
+    string targetDir = 5;
+    // Ссылка на ресурс
+    string from = 6;
+    // Путь к результату скачивания
+    string to = 7;
+}
+
+// Ошибка в агенте при работе с директориями
+message DirectoryFailure {
+    string state = 1;
+    string failReason = 3;
+    string directory = 4;
+}
+
+// Ресурс не удален, т.к. выставлено свойство cached = true
+message CachedResourceNotRemoved {
+    string state = 1;
+    // Свободное место в байтах
+    uint64 availableBytes = 4;
+    // Нижняя граница свободного места в байтах
+    uint64 spaceToLeaveOnDiskBytes = 5;
+    // Драйвер, владеющий резервацией
+    string reserver = 6;
+}
+
+// Ресурс ожидает свободного места на диске
+message WaitingForFreeSpace {
+    string state = 1;
+    // Драйвер, запрашивающий резервацию
+    string reserver = 4;
+    // Запрашиваемое место в байтах
+    uint64 requiredBytes = 5;
+    // Уже занятое место в байтах (например, ресурс частично скачался, потом агент перезапустился)
+    uint64 consumedBytes = 6;
+    // Размер дискового раздела в байтах
+    uint64 totalBytes = 7;
+    // Доступное место в байтах
+    uint64 availableBytes = 8;
+    // Нижняя граница свободного места в байтах
+    uint64 spaceToLeaveOnDiskBytes = 9;
+}
+
+// Ошибка операции над хуком (например, не найден файл хука, потерялся контейнер)
+message HookFailure {
+    string state = 1;
+    // Имя хука
+    string hook = 4;
+}
+
+// Внутренняя логика - нарушено ограничение на число повторений операции
+message CountLimit {
+    string state = 1;
+    // Разрешенное число повторений
+    uint32 maxAttempts = 4;
+    // Текущее число повторений
+    uint32 attempts = 5;
+}
+
+// Внутренняя логика - нарушено ограничение на частоту запуска операции
+message FrequencyLimit {
+    string state = 1;
+    // Время последнего запуска
+    string lastRun = 4;
+    // Время возникновения ошибки
+    string now = 5;
+    // Разрешенный интервал между запусками
+    string invocationGap = 6;
+}
+
+// Драйвер не может быть удален, так как на него еще есть ссылки
+message PendingDriverRemove {
+    string state = 1;
+    // Удаляемый драйвер
+    string id = 4;
+    // Удаляющий драйвер
+    string requesterId = 5;
+    // Класс удаляемого драйвера
+    string clazz = 6;
+    // Строковое описание удаляемого драйвера
+    string payload = 7;
+}
+
+// Внутренняя логика - нарушено ограничение на время выполнения операции
+message TimeLimitViolation {
+    string state = 1;
+    // Время запуска
+    string firstRun = 4;
+    // Ограничение на время выполнения
+    string duration = 5;
+    // Время, прошедшее с момента запуска
+    string durationFromFirstRun = 6;
+}
+
+// Ошибка при подготовке шарда
+message ShardFailure {
+    string state = 1;
+    string failReason = 3;
+    string shardId = 4;
+}
+
+//-------------------------------------------- Конфигурация агента ---------------------------------------------------
+
+message QueueControl {
+    bool blockedDownload = 1;
+}
+
+//----------------------------- Внутренний протокол обмена агент-сервер (кешер/capi) ----------------------------------
+
+message ToAgent {
+    oneof payload {
+        KeepAlive keepAlive = 1;
+        HostConfiguration hostConfiguration = 2;
+    }
+}
+
+message ToServer {
+    oneof payload {
+        AgentHandshake handshake = 1;
+        KeepAlive keepAlive = 2;
+        DetailedCurrentState currentState = 3;
+    }
+}
+
+// Целевое состояние хоста и агента
+message HostConfiguration {
+    repeated HostConfigurationInstance instances = 1;
+}
+
+// Обертка для job/instance
+message HostConfigurationInstance {
+    WorkloadId id = 1;
+    Entity entity = 2;
+
+    // Пользовательские свойства
+    // Пробрасываются хукам через переменные среды
+    map<string, string> properties = 3;
+    // Целевое состояние - одно из "ACTIVE", "PREPARED", "REMOVED"
+    string targetState = 4;
+    // Момент задания целевого состояния в формате UNIX timestamp
+    uint64 transitionTimestamp = 5;
+}
+
+// Сообщение, отправляемое агентом при установлении соединения
+message AgentHandshake {
+    string fqdn = 1;
+}
+
+// Сообщение для поддержания живости соединения
+message KeepAlive {
+}
+
