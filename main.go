@@ -1,8 +1,9 @@
 package main
 
 import (
-	"./capi"
 	"./clusterapi"
+	"./capi/capi"
+    "./capi/state"
 	"bytes"
 	"fmt"
 	"github.com/golang/protobuf/proto"
@@ -13,6 +14,13 @@ import (
 )
 
 func main() {
+    var state []*state.Host
+    state = state.GetCompactState()
+    fmt.Println(pretty.Formatter(state)
+    //run_sample_workload()
+}
+
+func run_sample_workload() {
 	log.Println("starting holy mess")
 
 	// command line options magic
