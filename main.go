@@ -1,10 +1,10 @@
 package main
 
 import (
-	"./clusterapi"
-	"./capi/capi"
-    "./capi/state"
 	"bytes"
+	"capi_tools/capi/capi"
+	"capi_tools/capi/state"
+	"capi_tools/clusterapi"
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/kr/pretty"
@@ -14,10 +14,14 @@ import (
 )
 
 func main() {
-    var state []*state.Host
-    state = state.GetCompactState()
-    fmt.Println(pretty.Formatter(state)
-    //run_sample_workload()
+	var cstate []*state.Host
+	cstate = state.GetCompactState()
+	for _, h := range cstate {
+		if h.Health == "UP" {
+			fmt.Printf("got host: %s, state: %s, total:[ cpu: %d, mem: %d ], free:[ cpu: %d, mem: %d ]\n", h.Id, h.Health, h.ResTotal.Cpu, h.ResTotal.Mem, h.ResFree.Cpu, h.ResFree.Mem)
+		}
+	}
+	//run_sample_workload()
 }
 
 func run_sample_workload() {

@@ -1,7 +1,7 @@
 package capi
 
 import (
-	"../../clusterapi"
+	"capi_tools/clusterapi"
 	"math/rand"
     "time"
 )

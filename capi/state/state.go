@@ -1,10 +1,10 @@
 package state
 
 import (
-	"../../clusterapi"
 	"bytes"
+	"capi_tools/clusterapi"
+	"fmt"
 	"github.com/golang/protobuf/proto"
-	//"github.com/kr/pretty"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -26,10 +26,11 @@ type Resource struct {
 type Host struct {
 	Id        string
 	Etag      int64
-	Resources *Resource
+	ResTotal  *Resource
+	ResFree   *Resource
 	Health    string
 	Location  string
-    Workloads []*clusterapi.Workload
+	Workloads []*clusterapi.Workload
 }
 
 func GetCompactState() []*Host {
@@ -37,19 +38,28 @@ func GetCompactState() []*Host {
 	var result []*Host
 
 	// prepare clusterstate request to capi
-	get_raw_state(raw_state)
+	raw_state = get_raw_state()
 	for _, host := range raw_state.Hosts {
 		h := new(Host)
 		h.Id = host.Metadata.Id
 		h.Etag = host.Metadata.Etag
 		h.Health = clusterapi.HostHealthState_name[int32(host.Metadata.Health.State)]
-		h.Resources = decode_resources(host.Metadata.ComputingResources)
-        h.Workloads = host.Workloads
+		h.ResTotal = decode_resources(host.Metadata.ComputingResources)
+		h.ResFree = new(Resource)
+		*h.ResFree = *h.ResTotal
+		h.Workloads = host.Workloads
 
 		// now update each host resource accordingly to running workloads
 		for _, wl := range host.Workloads {
-			wl_res := decode_resources(wl.Entity.Instance.Container.ComputingResources)
-			h.Resources = deduct_resources(h.Resources, wl_res)
+			var wl_res *Resource
+			if wl.Entity.Instance != nil {
+				wl_res = decode_resources(wl.Entity.Instance.Container.ComputingResources)
+			} else {
+				wl_res = decode_resources(wl.Entity.Job.Container.ComputingResources)
+			}
+			fmt.Printf("workload resources: host: %s, cpu: %d, mem: %d\n", h.Id, wl_res.Cpu, wl_res.Mem)
+
+			h.ResFree = deduct_resources(h.ResFree, wl_res)
 		}
 		result = append(result, h)
 	}
@@ -96,20 +106,35 @@ func deduct_resources(res, wl_res *Resource) *Resource {
 	return res
 }
 
-func get_raw_state(raw_state *clusterapi.ClusterState) {
-	req := new(clusterapi.GetStateRequest)
-	data, err := proto.Marshal(req)
+func get_raw_state() *clusterapi.ClusterState {
+	get_state_req := new(clusterapi.GetStateRequest)
+	get_state_req.HostFilter = "all"
+	get_state_req.WorkloadFilter = "all"
+	get_state_req.PreviousVersion = new(clusterapi.ClusterVersion)
+	get_state_req.PreviousVersion.Versions = make(map[string]uint64)
+	get_state_req.PreviousVersion.Versions["version"] = 0
+	data, err := proto.Marshal(get_state_req)
 	if err != nil {
 		log.Fatal("marshaling err: %v\n", err)
 	}
 
 	// send state request to capi
-	capi_url := "http://sit-dev-01-sas.haze.yandex.net:8082/proto/v0/state/full"
-	resp, err := http.Post(capi_url, "", bytes.NewBuffer(data))
+	capi_url := "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0/state/full"
+
+	//	capi_url := "http://iss00-prestable.search.yandex.net:8082/proto/v0/state/full"
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", capi_url, bytes.NewBuffer(data))
+	if err != nil {
+		log.Fatal("failed to create new request: ", err)
+	}
+	req.Header.Add("Accept", "application/x-protobuf")
+	req.Header.Add("Content-Type", "application/x-protobuf")
+
+	resp, err := client.Do(req)
+	defer resp.Body.Close()
 	if err != nil {
 		log.Fatal("failed to issue state request: %v\n", err)
 	}
-	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal("failed to read response request: %v\n", err)
@@ -125,7 +150,9 @@ func get_raw_state(raw_state *clusterapi.ClusterState) {
 	// endof debug
 
 	// unmarshal request
-	if err := proto.Unmarshal(body, raw_state); err != nil {
-		log.Fatal("failed to unmarshal response: %v\n", err)
+	raw_state := clusterapi.ClusterState{}
+	if err := proto.Unmarshal(body, &raw_state); err != nil {
+		log.Fatal("failed to unmarshal response:", err)
 	}
+	return &raw_state
 }
