@@ -44,7 +44,7 @@ func GetCompactState() []*Host {
 		h.Id = host.Metadata.Id
 		h.Etag = host.Metadata.Etag
 		h.Health = clusterapi.HostHealthState_name[int32(host.Metadata.Health.State)]
-		h.ResTotal = decode_resources(host.Metadata.ComputingResources)
+		h.ResTotal = DecodeResources(host.Metadata.ComputingResources)
 		h.ResFree = new(Resource)
 		*h.ResFree = *h.ResTotal
 		h.Workloads = host.Workloads
@@ -53,9 +53,9 @@ func GetCompactState() []*Host {
 		for _, wl := range host.Workloads {
 			var wl_res *Resource
 			if wl.Entity.Instance != nil {
-				wl_res = decode_resources(wl.Entity.Instance.Container.ComputingResources)
+				wl_res = DecodeResources(wl.Entity.Instance.Container.ComputingResources)
 			} else {
-				wl_res = decode_resources(wl.Entity.Job.Container.ComputingResources)
+				wl_res = DecodeResources(wl.Entity.Job.Container.ComputingResources)
 			}
 			fmt.Printf("workload resources: host: %s, cpu: %d, mem: %d\n", h.Id, wl_res.Cpu, wl_res.Mem)
 
@@ -66,7 +66,7 @@ func GetCompactState() []*Host {
 	return result
 }
 
-func decode_resources(res *clusterapi.ComputingResources) *Resource {
+func DecodeResources(res *clusterapi.ComputingResources) *Resource {
 	r := new(Resource)
 	// get common resources
 	r.Cpu = res.CpuPowerPercentsCore

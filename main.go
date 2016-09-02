@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"capi_tools/capi/capi"
 	"capi_tools/capi/state"
+	"capi_tools/capi/sched"
 	"capi_tools/clusterapi"
 	"fmt"
 	"github.com/golang/protobuf/proto"
