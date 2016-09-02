@@ -17,7 +17,7 @@ type ApplyResponse struct {
 	Exception string
 }
 
-var capi_url string = "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0/state/full"
+var capi_url string = "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0"
 
 //var capi_url string "http://iss00-prestable.search.yandex.net:8082/proto/v0/state/full"
 
@@ -57,7 +57,7 @@ func run_sample_workload(cstate []*state.Host, owner *clusterapi.Owner) {
 
 	// send apply request to capi
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", capi_url, bytes.NewBuffer(data))
+	req, err := http.NewRequest("POST", capi_url + "/apply/group", bytes.NewBuffer(data))
 	if err != nil {
 		log.Fatal("failed to create new request: ", err)
 	}

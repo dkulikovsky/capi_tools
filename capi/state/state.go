@@ -126,7 +126,7 @@ func get_raw_state(capi_url string) *clusterapi.ClusterState {
 	}
 
 	client := &http.Client{}
-    req, err := http.NewRequest("POST", capi_url, bytes.NewBuffer(data))
+    req, err := http.NewRequest("POST", capi_url+"/state/full", bytes.NewBuffer(data))
 	if err != nil {
 		log.Fatal("failed to create new request: ", err)
 	}
