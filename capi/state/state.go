@@ -33,21 +33,23 @@ type Host struct {
 	Workloads []*clusterapi.Workload
 }
 
-func GetCompactState() []*Host {
+func GetCompactState(capi_url string) []*Host {
 	var raw_state *clusterapi.ClusterState
 	var result []*Host
 
 	// prepare clusterstate request to capi
-	raw_state = get_raw_state()
+	raw_state = get_raw_state(capi_url)
 	for _, host := range raw_state.Hosts {
-		h := new(Host)
-		h.Id = host.Metadata.Id
-		h.Etag = host.Metadata.Etag
-		h.Health = clusterapi.HostHealthState_name[int32(host.Metadata.Health.State)]
-		h.ResTotal = DecodeResources(host.Metadata.ComputingResources)
-		h.ResFree = new(Resource)
+		h := &Host{
+			Id:        host.Metadata.Id,
+			Etag:      host.Metadata.Etag,
+			Health:    clusterapi.HostHealthState_name[int32(host.Metadata.Health.State)],
+			ResTotal:  DecodeResources(host.Metadata.ComputingResources),
+			ResFree:   new(Resource),
+			Workloads: host.Workloads,
+		}
+		// before we calculate free resources equal to all available resources
 		*h.ResFree = *h.ResTotal
-		h.Workloads = host.Workloads
 
 		// now update each host resource accordingly to running workloads
 		for _, wl := range host.Workloads {
@@ -67,24 +69,25 @@ func GetCompactState() []*Host {
 }
 
 func DecodeResources(res *clusterapi.ComputingResources) *Resource {
-	r := new(Resource)
-	// get common resources
-	r.Cpu = res.CpuPowerPercentsCore
-	r.Mem = res.RamBytes
-	r.HddSpace = res.HddSpaceBytes
-	r.Net = res.NetworkOutgoingBps
+	r := &Resource{
+		// get common resources
+		Cpu:      res.CpuPowerPercentsCore,
+		Mem:      res.RamBytes,
+		HddSpace: res.HddSpaceBytes,
+		Net:      res.NetworkOutgoingBps,
 
-	// disk iops
-	r.IoRead = res.IopsRead
-	r.IoWrite = res.IopsWrite
-	r.HasSsd = res.HasSsd
+		// disk iops
+		IoRead:  res.IopsRead,
+		IoWrite: res.IopsWrite,
+		HasSsd:  res.HasSsd,
 
-	// network options
-	r.Ipv4 = res.HasIpv4
-	r.Ipv6 = res.HasIpv6
+		// network options
+		Ipv4: res.HasIpv4,
+		Ipv6: res.HasIpv6,
 
-	// conductor tags, cms tags, etc.
-	r.Tags = get_resource_tags(res)
+		// conductor tags, cms tags, etc.
+		Tags: get_resource_tags(res),
+	}
 	return r
 }
 
@@ -106,24 +109,24 @@ func deduct_resources(res, wl_res *Resource) *Resource {
 	return res
 }
 
-func get_raw_state() *clusterapi.ClusterState {
-	get_state_req := new(clusterapi.GetStateRequest)
-	get_state_req.HostFilter = "all"
-	get_state_req.WorkloadFilter = "all"
-	get_state_req.PreviousVersion = new(clusterapi.ClusterVersion)
-	get_state_req.PreviousVersion.Versions = make(map[string]uint64)
-	get_state_req.PreviousVersion.Versions["version"] = 0
+func get_raw_state(capi_url string) *clusterapi.ClusterState {
+	get_state_req := &clusterapi.GetStateRequest{
+		HostFilter:     "all",
+		WorkloadFilter: "all",
+		PreviousVersion: &clusterapi.ClusterVersion{
+			Versions: map[string]uint64{
+				"version": 0,
+			},
+		},
+	}
+
 	data, err := proto.Marshal(get_state_req)
 	if err != nil {
 		log.Fatal("marshaling err: %v\n", err)
 	}
 
-	// send state request to capi
-	capi_url := "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0/state/full"
-
-	//	capi_url := "http://iss00-prestable.search.yandex.net:8082/proto/v0/state/full"
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", capi_url, bytes.NewBuffer(data))
+    req, err := http.NewRequest("POST", capi_url, bytes.NewBuffer(data))
 	if err != nil {
 		log.Fatal("failed to create new request: ", err)
 	}
@@ -140,15 +143,6 @@ func get_raw_state() *clusterapi.ClusterState {
 		log.Fatal("failed to read response request: %v\n", err)
 	}
 
-	// debug
-	log.Println("The calculated length is:", len(string(body)))
-	log.Println("   ", resp.StatusCode)
-	hdr := resp.Header
-	for key, value := range hdr {
-		log.Println("   ", key, ":", value)
-	}
-	// endof debug
-
 	// unmarshal request
 	raw_state := clusterapi.ClusterState{}
 	if err := proto.Unmarshal(body, &raw_state); err != nil {
@@ -156,3 +150,13 @@ func get_raw_state() *clusterapi.ClusterState {
 	}
 	return &raw_state
 }
+
+func PrintState(cstate []*Host) {
+	for _, h := range cstate {
+		if h.Health == "UP" {
+			fmt.Printf("got host: %s, state: %s, total:[ cpu: %d, mem: %d ], free:[ cpu: %d, mem: %d ]\n", h.Id, h.Health, h.ResTotal.Cpu, h.ResTotal.Mem, h.ResFree.Cpu, h.ResFree.Mem)
+		}
+	}
+}
+
+
