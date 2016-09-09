@@ -1,0 +1,17 @@
+owner: dkulikovsky
+project_id: CAPIDEVNETS
+spec:
+    resources:
+        cpu: 50
+        ram: 1G
+        # диски и сеть по умолчанию, скажем 50Мбит и 50Гб
+        # net: 50 # единица измерения Мбит
+        # disk: 50 # eдиница измерения Гб
+    volumes:
+        - uuid: ubuntu-precise
+            mount: /
+            url: rbtorrent:a3a80ac6aba30bd8350cfa3f56488bcc4615e0f7
+    command: /sbin/init
+    start_hook: https://paste.yandex-team.ru/147541/text
+
+

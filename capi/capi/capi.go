@@ -2,6 +2,7 @@ package capi
 
 import (
 	"capi_tools/clusterapi"
+    "capi_tools/task"
 	"math/rand"
 	"time"
 )
@@ -36,31 +37,30 @@ func ApplyGroup(group *clusterapi.GroupTransition) *clusterapi.ApplyGroupTransit
 		GroupTransitions:   []*clusterapi.GroupTransition{group}}
 }
 
-func SampleWorkload(owner *clusterapi.Owner) *clusterapi.Workload {
+func SampleWorkload(task *task.Task) *clusterapi.Workload {
 	wl := &clusterapi.Workload{
-		Owner:       owner,
+		Owner:       task.Owner,
 		TargetState: "ACTIVE",
-		Entity:      &clusterapi.Entity{Instance: get_instance()},
+		Entity:      &clusterapi.Entity{Instance: get_instance(task)},
 	}
 
 	wl_id := new(clusterapi.WorkloadId)
-	wl_id.Slot = &clusterapi.Slot{Service: "dkulikovsky_test_service_v0.1.0"}
-	wl_id.Configuration = &clusterapi.ConfigurationId{GroupId: "dkulikovsky_configuration_" + gen_id()}
+	wl_id.Slot = &clusterapi.Slot{Service: fmt.Sprintf("%s_%s_%s", task.Owner, task.Service, task.Version)}
+	wl_id.Configuration = &clusterapi.ConfigurationId{GroupId: task.Owner+"_configuration_" + gen_id()}
 	wl.Id = wl_id
 
 	return wl
 }
 
-func SetWlHost(host string, wl *clusterapi.Workload) *clusterapi.Workload {
-	wl.Id.Slot.Host = host
+func SetWlHost(task *task.Task, wl *clusterapi.Workload) *clusterapi.Workload {
+	wl.Id.Slot.Host = task.Hostname
 	return wl
 }
 
-func SetWlNet(ip, hostname string, wl *clusterapi.Workload) *clusterapi.Workload {
+func SetWlNet(task *task.Task, wl *clusterapi.Workload) *clusterapi.Workload {
 	net := map[string]string{
-		"meta.net":      "macvlan vlan1478 eth0",
-		"meta.ip":       "eth0 " + ip,
-		"meta.hostname": hostname,
+		"meta.ip":       "eth0 " + task.Ip,
+		"meta.hostname": task.Hostname,
 	}
 	for k, v := range net {
 		wl.Entity.Instance.Container.Constraints[k] = v
@@ -78,7 +78,13 @@ func gen_id() string {
 	return string(b)
 }
 
-func get_container(constraints map[string]string) *clusterapi.Container {
+func get_container(task task.Task) *clusterapi.Container {
+	constraints := map[string]string{
+		"memory_limit":                   string(task.Resources.Ram),
+		"meta.net":       "macvlan vlan1478 eth0",
+		"meta.virt_mode": "os",
+		"meta.command":   task.Spec.Command,
+	}
 	c := &clusterapi.Container{
 		Constraints: constraints,
 		Id:          "dkulikovsky_container_" + gen_id(),
@@ -86,8 +92,8 @@ func get_container(constraints map[string]string) *clusterapi.Container {
 
 	// set resources needed by intance (Container)
 	resources := &clusterapi.ComputingResources{
-		CpuPowerPercentsCore: 50,
-		RamBytes:             8589934592,
+		CpuPowerPercentsCore: task.Resources.Cpu,
+		RamBytes:             task.Resources.Ram,
 	}
 	c.ComputingResources = resources
 
@@ -122,14 +128,7 @@ func get_instance() *clusterapi.Instance {
 	instance.Resources["iss_hook_start"] = get_dummy_start_hook()
 
 	// create actual container
-	constraints := map[string]string{
-		// "memory_limit":                    "8589934593",
-		"meta.net":       "macvlan vlan1478 eth0",
-		"meta.ip":        "eth0 2a02:6b8:c03:21d:0:4097:de37:e7e4",
-		"meta.hostname":  "i-de37e7e414b0.qloud-c.yandex.net",
-		"meta.virt_mode": "os",
-		"meta.command":   "/sbin/init",
-	}
+
 	instance.Container = get_container(constraints)
 
 	return instance

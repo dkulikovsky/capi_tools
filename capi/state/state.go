@@ -134,10 +134,10 @@ func get_raw_state(capi_url string) *clusterapi.ClusterState {
 	req.Header.Add("Content-Type", "application/x-protobuf")
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
-		log.Fatal("failed to issue state request: %v\n", err)
+		log.Fatal("failed to issue state request:", err)
 	}
+	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatal("failed to read response request: %v\n", err)
