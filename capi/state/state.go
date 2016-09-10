@@ -19,7 +19,7 @@ type Resource struct {
 	IoWrite  uint32
 	HasSsd   bool
 	Net      uint64
-	HddSpace uint64
+	Disk uint64
 	Tags     map[string]uint64
 }
 
@@ -73,7 +73,7 @@ func DecodeResources(res *clusterapi.ComputingResources) *Resource {
 		// get common resources
 		Cpu:      res.CpuPowerPercentsCore,
 		Mem:      res.RamBytes,
-		HddSpace: res.HddSpaceBytes,
+		Disk: res.HddSpaceBytes,
 		Net:      res.NetworkOutgoingBps,
 
 		// disk iops
@@ -103,7 +103,7 @@ func deduct_resources(res, wl_res *Resource) *Resource {
 	res.Cpu -= wl_res.Cpu
 	res.Mem -= wl_res.Mem
 	res.Net -= wl_res.Net
-	res.HddSpace -= wl_res.HddSpace
+	res.Disk -= wl_res.Disk
 	res.IoRead -= wl_res.IoRead
 	res.IoWrite -= wl_res.IoWrite
 	return res

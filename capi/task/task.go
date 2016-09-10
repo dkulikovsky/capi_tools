@@ -1,14 +1,10 @@
 package task
 
 type Task struct {
-	Owner     string
-	ProjectId string `yaml:"project_id"`
-    Service   string
-    Version   string
-	Spec      Spec
-}
-
-type Spec struct {
+	Owner      string
+	ProjectId  string `yaml:"project_id"`
+    Service    string
+    Version    string
 	Resources  Resources
 	Volumes    map[string]Volume
 	Command    string
@@ -19,8 +15,8 @@ type Spec struct {
 }
 
 type Resources struct {
-	Cpu  int32
-	Ram  int32
+	Cpu  uint32
+	Ram  uint64
 	Net  int32 `yaml:",omitempty"`
 	Disk int32
 }
