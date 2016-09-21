@@ -1,0 +1,5 @@
+got host: s1-1110.qloud.yandex.net, state: UP, total:[ cpu: 3150, Ram: 198520528896 ], free:[ cpu: 3150, Ram: 198520528896 ]
+
+====Workloads====
+[]*clusterapi.Workload(nil)
+====END====

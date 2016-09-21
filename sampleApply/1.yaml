@@ -1,0 +1,13 @@
+owner: dkulikovsky
+version: 0.1
+service: testService
+project_id: CAPIDEVNETS
+command: /sbin/init
+start_hook: https://paste.yandex-team.ru/147541/text
+resources:
+    cpu: 50
+    ram: 100
+volumes:
+    ubuntu-precise:
+        mount: /
+        url: rbtorrent:a3a80ac6aba30bd8350cfa3f56488bcc4615e0f7

@@ -1,11 +1,24 @@
 package main
 
 import (
-	"capi_tools/capi/state"
+	"capi/state"
+	"log"
 )
-var capi_url string = "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0/state/full"
-//var capi_url string "http://iss00-prestable.search.yandex.net:8082/proto/v0/state/full"
+
+var capiURL = "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0"
+
+//var capiURL = "http://iss00-prestable.search.yandex.net:8082/proto/v0/state/full"
 
 func main() {
-    state.PrintState(state.GetCompactState(capi_url))
+	// prepare clusterstate request to capi
+	filter := state.Filter{
+		Host: "'HostMetadata/id' == 's1-1110.qloud.yandex.net'",
+		Wl:   "all",
+	}
+
+	cstate, err := state.GetCompactState(filter, capiURL)
+	if err != nil {
+		log.Fatalf("Failed to get state: %v", err)
+	}
+	state.PrintState(cstate)
 }
