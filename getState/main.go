@@ -11,10 +11,6 @@ var capiURL = "http://sit-dev-01-sas.haze.yandex.net:8081/proto/v0"
 
 func main() {
 	// prepare clusterstate request to capi
-	filter := state.Filter{
-		Host: "'HostMetadata/id' == 's1-1110.qloud.yandex.net'",
-		Wl:   "all",
-	}
 
 	cstate, err := state.GetCompactState(filter, capiURL)
 	if err != nil {
