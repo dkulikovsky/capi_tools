@@ -1,6 +1,6 @@
 owner: dkulikovsky
-version: 0.1
-service: testService
+version: 01
+service: pure_ubuntu_1
 project_id: CAPIDEVNETS
 command: /sbin/init
 start_hook: https://paste.yandex-team.ru/147541/text
